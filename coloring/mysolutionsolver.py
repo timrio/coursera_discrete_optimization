@@ -46,7 +46,7 @@ class Solver:
         # solve model
         instance = self.model.create_instance()
         opt = SolverFactory("cbc")
-        results = opt.solve(instance)
+        results = opt.solve(instance, tee=True)
 
         opt_value, solution = self.extract_solution(instance)
 
@@ -142,19 +142,23 @@ class Constraints:
             self.model.set_node_domain,
             rule=self.declare_one_color_per_node_constraint(),
         )
-        self.model.constraint_define_color_used_upper = Constraint(
-            self.model.set_color_domain,
-            rule=self.declare_define_color_used_constraint_upper(),
+        self.model.constraint_define_color_used = Constraint(
+            self.model.set_node_color_domain,
+            rule=self.declare_define_color_used_constraint(),
         )
 
-        self.model.constraint_define_color_used_lower = Constraint(
-            self.model.set_color_domain,
-            rule=self.declare_define_color_used_constraint_lower(),
-        )
+        # self.model.constraint_define_color_used_lower = Constraint(
+        #     self.model.set_color_domain,
+        #     rule=self.declare_define_color_used_constraint_lower(),
+        # )
 
         self.model.constraint_symetry_breaking = Constraint(
             self.model.set_all_successive_colors,
             rule=self.declare_symetry_breaking_constraint(),
+        )
+
+        self.model.constraint_first_node = Constraint(
+            rule=self.declare_first_node(),
         )
 
     def declare_adjacency_color_constraint(self):
@@ -180,19 +184,11 @@ class Constraints:
 
         return define_one_color_per_node_constraint
 
-    def declare_define_color_used_constraint_upper(self):
-        def define_color_used_constraint_upper(model, color):
-            return (
-                sum(
-                    [
-                        model.var_color_node[node, color]
-                        for node in model.set_node_domain
-                    ]
-                )
-                <= model.param_big_M * model.var_color_used[color]
-            )
+    def declare_define_color_used_constraint(self):
+        def define_color_used_constraint(model, node, color):
+            return model.var_color_node[node, color] <= model.var_color_used[color]
 
-        return define_color_used_constraint_upper
+        return define_color_used_constraint
 
     def declare_define_color_used_constraint_lower(self):
         def define_color_used_constraint_lower(model, color):
@@ -213,6 +209,12 @@ class Constraints:
             return model.var_color_used[color1] >= model.var_color_used[color2]
 
         return symetry_breaking_constraint
+
+    def declare_first_node(self):
+        def first_node(model):
+            return model.var_color_node[0, 0] == 1
+
+        return first_node
 
 
 class Objectives:
