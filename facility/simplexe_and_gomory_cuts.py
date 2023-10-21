@@ -7,6 +7,8 @@ from numpy.linalg import inv
 A = np.array([[3,2,1,0], [-3,2,0,1]])
 b = np.array([6,0])
 c = np.array([0,-1,0,0])
+NUMBER_OF_VARIABLES = 2
+
 
 def simplex_iteration(A,b,c):
     m = A.shape[0]
@@ -51,7 +53,7 @@ def simplex_iteration(A,b,c):
             # permute entering and exiting values
             permutation[entering_index], permutation[(n-m)+exiting_index] = permutation[(n-m)+exiting_index],permutation[entering_index]
 
-    return H, pi, permutation, x_b_opt, m, n
+    return H, pi, permutation, x_b_opt, m, n, np.dot(pi,b)
     
 
 def find_gomory_cuts(H, permutation, x_b_opt, m):
@@ -68,7 +70,7 @@ def find_gomory_cuts(H, permutation, x_b_opt, m):
     return gomory_cuts
 
 
-def add_gomory_cuts(H, x_b_opt, permuation, m, n, c, gomory_cuts):
+def add_gomory_cuts(H, x_b_opt, permutation, m, n, c, gomory_cuts):
     updated_H = H
     updated_x_b_opt = x_b_opt
     updated_c = c
@@ -98,8 +100,6 @@ def add_gomory_cuts(H, x_b_opt, permuation, m, n, c, gomory_cuts):
 
 
 def dual_simplex_python(H, x_b_opt, updated_c, permutation, m,n):
-
-
     # reconstruct A, b and c
     b = x_b_opt
     c = updated_c
@@ -158,29 +158,53 @@ def dual_simplex_python(H, x_b_opt, updated_c, permutation, m,n):
 
                 # permute entering and exiting values
                 permutation[entering_index], permutation[(n-m)+exiting_index] = permutation[(n-m)+exiting_index],permutation[entering_index]
-    return H, pi, permutation, x_b_opt, m, n
+    return H, pi, permutation, x_b_opt, m, n, np.dot(pi,b)
     
 
 
-def get_sorted_value_from_simplex_iteration(pi,b,x_b_opt, permutation, number_of_basic_variables, number_of_variables):
-    optimal_value = np.dot(pi,b)
+def get_sorted_value_from_simplex_iteration(x_b_opt, permutation, number_of_basic_variables, number_of_variables):
 
     x = [0 for i in range(number_of_variables-number_of_basic_variables)] + list(x_b_opt)
     x_ordered = [0 for i in range(number_of_variables)]
     for i, correct_index in enumerate(permutation):
         x_ordered[correct_index] = x[i]
+    return x_ordered
 
-    return optimal_value, x_ordered
+
+def check_solution_is_integer(x_ordered):
+    for val in x_ordered[:NUMBER_OF_VARIABLES]:
+        if np.round(val,0)!=val:
+            return False
+    return True
+
+
+def solve(A,b,c):
+    print("run simplex")
+    H, pi, permutation, x_b_opt, m, n, optimal_value = simplex_iteration(A,b,c)
+    x_ordered = get_sorted_value_from_simplex_iteration(x_b_opt, permutation, m, n)
+    print(f"current solution: {x_ordered}")
+    print(f"current optimal value: {optimal_value}")
 
     
 
-H, pi, permutation, x_b_opt, m, n = simplex_iteration(A,b,c)
+    while not check_solution_is_integer(x_ordered):
+        gomory_cuts = find_gomory_cuts(H, permutation, x_b_opt, m)
+        print("possible gomory cuts found, running dual simplex")
+        H, x_b_opt, c, m, n, permutation = add_gomory_cuts(H, x_b_opt, permutation, m, n, c, gomory_cuts)
+        H, pi, permutation, x_b_opt, m, n, optimal_value = dual_simplex_python(H, x_b_opt, c, permutation, m,n)
+        x_ordered = get_sorted_value_from_simplex_iteration(x_b_opt, permutation, m, n)
 
-gomory_cuts = find_gomory_cuts(H, permutation, x_b_opt, m)
-H, x_b_opt, c, m, n, permutation = add_gomory_cuts(H, x_b_opt, permutation, m, n, c, gomory_cuts)
-H, pi, permutation, x_b_opt, m, n = dual_simplex_python(H, x_b_opt, c, permutation, m,n)
+        print(f"current solution: {x_ordered}")
+        print(f"current optimal value: {optimal_value}")
+
+    print('optimal integer solution found')
 
 
-gomory_cuts = find_gomory_cuts(H, permutation, x_b_opt, m)
-H, x_b_opt, c, m, n, permutation = add_gomory_cuts(H, x_b_opt, permutation, m, n, c, gomory_cuts)
-H, pi, permutation, x_b_opt, m, n = dual_simplex_python(H, x_b_opt, c, permutation, m,n)
+    return x_ordered, optimal_value
+
+
+
+
+x_ordered, optimal_value = solve(A,b,c)
+print(x_ordered)
+print(optimal_value)
