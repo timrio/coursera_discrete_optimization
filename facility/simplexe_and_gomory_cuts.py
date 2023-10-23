@@ -1,210 +1,245 @@
 import numpy as np
 from numpy.linalg import inv
 
+class Model:
+
+    def __init__(self, A, b , c):
+        self.A = A
+        self.b = b
+        self.c = c
+        self.basis_indexes = []
+        self.non_basis_indexes = []
+        self.initial_variable_indexes = [i for i in range(A.shape[1])]
+        self.initial_constraints_indexes = [i for i in range(A.shape[0])]
+        self.H = None
+        self.current_optimal_value = None
+        self.current_solution = None
 
 
-# define problem initial state
-A = np.array([[3,2,1,0], [-3,2,0,1]])
-b = np.array([6,0])
-c = np.array([0,-1,0,0])
-NUMBER_OF_VARIABLES = 2
+    @property
+    def number_of_variables(self): 
+        return self.A.shape[1]
+
+    @property
+    def number_of_constraints(self):
+        return self.A.shape[0]
+
+    @property
+    def current_solution_ordered(self):
+        x = np.r_[np.array([0 for i in range(self.number_of_variables - self.number_of_constraints)]),self.current_solution]
+        indexes = self.non_basis_indexes + self.basis_indexes
+        x_ordered = [0 for i in range(self.number_of_variables)]
+        for i, correct_index in enumerate(indexes):
+            x_ordered[correct_index] = x[i]
+        return x_ordered
+
+    @property
+    def solution_is_integer(self):
+        for val in self.current_solution_ordered[:len(self.initial_variable_indexes)]:
+            if np.round(val,0)!=val:
+                return False
+        return True
 
 
-def simplex_iteration(A,b,c):
-    m = A.shape[0]
-    n = A.shape[1]
+    def initiate_model_and_slack_variables(self):
+        initial_number_of_constraints = len(self.initial_constraints_indexes)
+        self.non_basis_indexes = [i for i in range(self.A.shape[1])]
+        for i in range(initial_number_of_constraints):
+            new_column = np.zeros(self.A.shape[0])
+            new_column[i] = 1
+            self.A = np.c_[self.A, new_column]
+            self.c = np.r_[self.c, [0]]
+        self.basis_indexes = list(set([i for i in range(self.A.shape[1])])-set(self.non_basis_indexes))
+        return
 
-    permutation = [i for i in range(n)]    
-    if b.any()<0:
-        print("cannot find initial basis")
-        return False
-
-    keep_going = True
-
-    while keep_going:
-
-        A_b, A_n = A[:,permutation[-m:]], A[:,permutation[:-m]]
-        c_b, c_n = c[permutation[-m:]], c[permutation[:-m]]
-        if np.linalg.det(A_b) == 0:
-            return 'matrice non inversible'
-        A_b_inv = inv(A_b)
-        pi = np.dot(c_b,A_b_inv) 
-        x_b_opt = np.dot(A_b_inv,b)
         
-        # express x basis according to xn
-        # x_b = x_b_opt - H @ x_n
-        H = np.dot(A_b_inv, A_n)
 
-        # compute reduced costs
-        reduced_cost = c_n - np.dot(pi, A_n)
+    def simplex_iteration(self):   
+        if any(self.b<0):           
+            print("cannot find initial basis")
+            return False
 
-        if (reduced_cost >= 0).all():
-            keep_going = False
+        keep_going = True
 
-        else:
-            # we need find entering and exiting variable
-            entering_index = np.argmin(reduced_cost)
-            ratio = (x_b_opt / H[:, entering_index])
+        while keep_going:
+            A_b, A_n = self.A[:,self.basis_indexes], self.A[:,self.non_basis_indexes]
+            c_b, c_n = self.c[self.basis_indexes], self.c[self.non_basis_indexes]
+
+            if np.linalg.det(A_b) == 0:
+                return 'matrice non inversible'
+
+            A_b_inv = inv(A_b)
+            pi = np.dot(c_b,A_b_inv) 
+            self.current_solution = np.dot(A_b_inv,b)
             
-            # Avoid division by zero in case of non-positive entries in H[:, entering_index]
-            ratio[(ratio < 0)] = np.inf
-            exiting_index = np.argmin([value if H[i, entering_index]>0 else np.inf for i,value in enumerate(ratio)])
+            # express x basis according to xn
+            # x_b = x_b_opt - H @ x_n
+            self.H = np.dot(A_b_inv, A_n)
 
-            # permute entering and exiting values
-            permutation[entering_index], permutation[(n-m)+exiting_index] = permutation[(n-m)+exiting_index],permutation[entering_index]
+            # compute reduced costs
+            reduced_cost = c_n - np.dot(pi, A_n)
 
-    return H, pi, permutation, x_b_opt, m, n, np.dot(pi,b)
-    
+            if (reduced_cost >= 0).all():
+                keep_going = False
 
-def find_gomory_cuts(H, permutation, x_b_opt, m):
-    gomory_cuts = []
-    non_basic_variables = permutation[:m]
-    for i, basic_value in enumerate(x_b_opt):
-        # check if basic value is an int
-        if np.round(basic_value,0)!=basic_value:
-            new_cut = {}
-            new_cut["b"] = -(basic_value - np.floor(basic_value))
-            for j, val in enumerate(H[i,:]):
-                new_cut[j] = -(val - np.floor(val))
-            gomory_cuts.append(new_cut)
-    return gomory_cuts
-
-
-def add_gomory_cuts(H, x_b_opt, permutation, m, n, c, gomory_cuts):
-    updated_H = H
-    updated_x_b_opt = x_b_opt
-    updated_c = c
-    if len(gomory_cuts)==0:
-        return updated_H, updated_x_b_opt, updated_c, m,n
-
-    for cut in gomory_cuts:
-        # add the constraint
-        new_line = np.zeros(updated_H.shape[1])
-        new_b = None
-        for k, v in cut.items():
-            if k == "b":
-                new_b = v
-                continue
-            new_line[k] = v
-
-        updated_H = np.r_[updated_H, [new_line]]
-
-        #update b
-        updated_x_b_opt = np.append(updated_x_b_opt, new_b)
-
-        # update c
-        updated_c = np.append(updated_c, 0)
-
-    permutation.append(n)
-    return updated_H, updated_x_b_opt, updated_c, m+1, n+1, permutation
-
-
-def dual_simplex_python(H, x_b_opt, updated_c, permutation, m,n):
-    # reconstruct A, b and c
-    b = x_b_opt
-    c = updated_c
-    A = np.zeros((m,n))
-    basis_col = np.eye(m)
-    
-    # start with non basis columns
-    for i, col_index in enumerate(permutation[:-m]):
-        A[:,col_index] = H[:,i]
-
-    # continue with non basis columns
-    for i, col_index in enumerate(permutation[-m:]):
-        A[:,col_index] = basis_col[:,i]
-        
-
-    keep_going = True
-    while keep_going:
-        
-        A_b, A_n = A[:,permutation[-m:]], A[:,permutation[:-m]]
-        c_b, c_n = c[permutation[-m:]], c[permutation[:-m]]
-
-        A_b_inv = inv(A_b)
-        pi = np.dot(c_b,A_b_inv) 
-        x_b_opt = np.dot(A_b_inv,b)
-        
-        # express x basis according to xn
-        # x_b = x_b_opt - H @ x_n
-        H = np.dot(A_b_inv, A_n)
-
-        # compute reduced costs
-        reduced_cost = c_n - np.dot(pi, A_n)
-
-
-        if all(x_b_opt>=0):
-            keep_going = False
-        else:
-            # find the variable that will leave, the basis, this is the one the first negative beta
-            min_val = np.inf
-            exiting_index = None
-            for i in range(m):
-                if x_b_opt[i] < min_val and x_b_opt[i]<0:
-                    exiting_index = i
-                    min_val = x_b_opt[i]
-                    break
-            if all(val>=0 for val in H[exiting_index,:]):
-                print("model infeasible")
-                break
             else:
-                # we choose the variable that enters the basis
-                min_val = np.inf
-                entering_index = None
-                for i in range(n-m):
-                    if H[exiting_index,i] < 0 and reduced_cost[i]/np.abs(H[exiting_index,i]) < min_val:
-                        min_val = reduced_cost[i]/np.abs(H[exiting_index,i]) 
-                        entering_index = i 
+                # we need find entering and exiting variable
+                entering_index = np.argmin(reduced_cost)
+                ratio = (self.current_solution / self.H[:, entering_index])
+                
+                # Avoid division by zero in case of non-positive entries in H[:, entering_index]
+                ratio[(ratio < 0)] = np.inf
+                exiting_index = np.argmin([value if self.H[i, entering_index]>0 else np.inf for i,value in enumerate(ratio)])
 
                 # permute entering and exiting values
-                permutation[entering_index], permutation[(n-m)+exiting_index] = permutation[(n-m)+exiting_index],permutation[entering_index]
-    return H, pi, permutation, x_b_opt, m, n, np.dot(pi,b)
-    
+                self.non_basis_indexes[entering_index], self.basis_indexes[exiting_index] = self.basis_indexes[exiting_index],self.non_basis_indexes[entering_index]
+
+        # compute current optimal value 
+        self.current_optimal_value = np.dot(pi,self.b)
+        return
+
+    def find_gomory_cuts(self):
+        gomory_cuts = []
+        for i, basic_value in enumerate(self.current_solution):
+            # check if basic value is an int
+            if np.round(basic_value,0)!=basic_value:
+                new_cut = {}
+                new_cut["b"] = -(basic_value - np.floor(basic_value))
+                for j, val in enumerate(self.H[i,:]):
+                    new_cut[self.non_basis_indexes[j]] = -(val - np.floor(val))
+                gomory_cuts.append(new_cut)
+        return gomory_cuts
 
 
-def get_sorted_value_from_simplex_iteration(x_b_opt, permutation, number_of_basic_variables, number_of_variables):
-
-    x = [0 for i in range(number_of_variables-number_of_basic_variables)] + list(x_b_opt)
-    x_ordered = [0 for i in range(number_of_variables)]
-    for i, correct_index in enumerate(permutation):
-        x_ordered[correct_index] = x[i]
-    return x_ordered
-
-
-def check_solution_is_integer(x_ordered):
-    for val in x_ordered[:NUMBER_OF_VARIABLES]:
-        if np.round(val,0)!=val:
-            return False
-    return True
-
-
-def solve(A,b,c):
-    print("run simplex")
-    H, pi, permutation, x_b_opt, m, n, optimal_value = simplex_iteration(A,b,c)
-    x_ordered = get_sorted_value_from_simplex_iteration(x_b_opt, permutation, m, n)
-    print(f"current solution: {x_ordered}")
-    print(f"current optimal value: {optimal_value}")
-
-    
-
-    while not check_solution_is_integer(x_ordered):
-        gomory_cuts = find_gomory_cuts(H, permutation, x_b_opt, m)
-        print("possible gomory cuts found, running dual simplex")
-        H, x_b_opt, c, m, n, permutation = add_gomory_cuts(H, x_b_opt, permutation, m, n, c, gomory_cuts)
-        H, pi, permutation, x_b_opt, m, n, optimal_value = dual_simplex_python(H, x_b_opt, c, permutation, m,n)
-        x_ordered = get_sorted_value_from_simplex_iteration(x_b_opt, permutation, m, n)
-
-        print(f"current solution: {x_ordered}")
-        print(f"current optimal value: {optimal_value}")
-
-    print('optimal integer solution found')
+    def add_gomory_cuts(self):
+        gomory_cuts = self.find_gomory_cuts()
+        if len(gomory_cuts)==0:
+            return
+        for cut in gomory_cuts:
+            # add the constraint
+            new_line = np.zeros(self.A.shape[1])
+            new_b = None
+            for k, v in cut.items():
+                if k == "b":
+                    new_b = v
+                    continue
+                new_line[k] = v
 
 
-    return x_ordered, optimal_value
+            self.A = np.r_[self.A, [new_line]]
+            new_col = np.zeros(self.A.shape[0])
+            new_col[-1] = 1
+            self.A = np.c_[self.A, new_col]
+            #update b
+            self.b = np.append(self.b, new_b)
+            # update c
+            self.c = np.append(self.c, 0)
+            self.basis_indexes.append(self.number_of_variables-1)
+
+        # reconstruct A,b and c
+        return 
+
+    def dual_simplex_python(self):
+        # initialize dual simplex 
+        keep_going = True
+        while keep_going:
+            
+            A_b, A_n = self.A[:,self.basis_indexes], self.A[:,self.non_basis_indexes]
+            c_b, c_n = self.c[self.basis_indexes], self.c[self.non_basis_indexes]
+
+            A_b_inv = inv(A_b)
+            pi = np.dot(c_b,A_b_inv) 
+            self.current_solution = np.dot(A_b_inv,self.b)
+            
+            # express x basis according to xn
+            # x_b = x_b_opt - H @ x_n
+            self.H = np.dot(A_b_inv, A_n)
+
+            # compute reduced costs
+            reduced_cost = c_n - np.dot(pi, A_n)
+
+            if all(self.current_solution>=0):
+                keep_going = False
+            else:
+                # find the variable that will leave, the basis, this is the one the first negative beta
+                min_val = np.inf
+                exiting_index = None
+                for i in range(self.number_of_constraints):
+                    if self.current_solution[i] < min_val and self.current_solution[i]<0:
+                        exiting_index = i
+                        min_val = self.current_solution[i]
+                        break
+                if all(val>=0 for val in self.H[exiting_index,:]):
+                    print("model infeasible")
+                    break
+                else:
+                    # we choose the variable that enters the basis
+                    min_val = np.inf
+                    entering_index = None
+                    for i in range(self.number_of_variables-self.number_of_constraints):
+                        if self.H[exiting_index,i] < 0 and reduced_cost[i]/np.abs(self.H[exiting_index,i]) < min_val:
+                            min_val = reduced_cost[i]/np.abs(self.H[exiting_index,i]) 
+                            entering_index = i 
+
+                    # permute entering and exiting values
+                    self.non_basis_indexes[entering_index], self.basis_indexes[exiting_index] = self.basis_indexes[exiting_index],self.non_basis_indexes[entering_index]
+        # compute current optimal value 
+        self.current_optimal_value = np.dot(pi,self.b)
+        return
+
+    def express_situation_according_to_initial_variables(self):
+        temp_non_basis_indexes = self.initial_variable_indexes
+        temp_basis_indexes = list(set([i for i in range(self.A.shape[1])])-set(temp_non_basis_indexes))
+
+        A_b, A_n = self.A[:,temp_basis_indexes], self.A[:,temp_non_basis_indexes]
+        c_b, c_n = self.c[temp_basis_indexes], self.c[temp_non_basis_indexes]
+
+        A_b_inv = inv(A_b)
+
+        ordinate = np.dot(A_b_inv,self.b)
+        
+        # express x basis according to xn
+        # x_b = x_b_opt - H @ x_n
+        H = np.dot(A_b_inv, A_n)
+        
+        return H, ordinate
 
 
+    def solve(self):
+        print("add slack variables")
+        self.initiate_model_and_slack_variables()
+
+        print("run simplex")
+        self.simplex_iteration()
+        print(f"current solution: {self.current_solution_ordered}")
+        print(f"current optimal value: {self.current_optimal_value}")
+
+        
+        while not self.solution_is_integer:
+            print("possible gomory cuts found, running dual simplex")
+            self.add_gomory_cuts()
+            self.dual_simplex_python()
+            print(f"current solution: {self.current_solution_ordered}")
+            print(f"current optimal value: {self.current_optimal_value}")
+
+        print('optimal integer solution found')
+
+        return self.current_solution_ordered, self.current_optimal_value
 
 
-x_ordered, optimal_value = solve(A,b,c)
+    def draw_situation(self):
+        pass
+
+###### define model and data
+
+# define problem initial state
+A = np.array([[3,2], [-3,2]])
+b = np.array([6,0])
+c = np.array([0,-1])
+
+model = Model(A,b,c)
+
+x_ordered, optimal_value = model.solve()
+model.express_situation_according_to_initial_variables()
 print(x_ordered)
 print(optimal_value)
