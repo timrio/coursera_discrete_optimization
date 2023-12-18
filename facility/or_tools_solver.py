@@ -164,6 +164,8 @@ def main_solver(input_data):
         number_of_tiles_per_border = 10
     elif len(customers) == 3000 and len(facilities)==500:
         number_of_tiles_per_border = 7
+    elif len(customers) == 1500 and len(facilities)==1000:
+        number_of_tiles_per_border = 6
     else:
         number_of_tiles_per_border = 4
 
