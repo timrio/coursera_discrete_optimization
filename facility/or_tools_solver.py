@@ -70,14 +70,8 @@ def create_problem_matricies(input_data):
         )
 
     distance_matrix = create_distance_matrix(facilities, customers)
-    setup_cost_array = create_setup_cost_array(facilities)
-    customer_demand_array = create_customer_demand_array(customers)
-    capacity_array = create_capacity_array(facilities)
     return (
         distance_matrix,
-        setup_cost_array,
-        customer_demand_array,
-        capacity_array,
         facilities,
         customers,
     )
@@ -99,10 +93,11 @@ def create_variables(model, facilities, customers):
     for f in facilities:
         # y defines wether a facility is open
         y[f.index] = model.NewBoolVar("y[%i]" % f.index)
+
     return x, y
 
 
-def create_constraints(model, facilities, customers, x, y):
+def create_constraints(model, facilities, customers, x, y, has_been_opened):
     # create constraints
     for c in customers:
         model.Add(sum(x[f.index, c.index] for f in facilities) == 1)
@@ -112,10 +107,12 @@ def create_constraints(model, facilities, customers, x, y):
             model.Add(x[f.index, c.index] <= y[f.index])
 
     for f in facilities:
-        model.Add(
-            sum(x[f.index, c.index] * c.demand for c in customers)
-            <= f.capacity
-        )
+        model.Add(sum(x[f.index, c.index] * c.demand for c in customers) <= f.capacity)
+
+    for f_index in range(len(has_been_opened)):
+        if has_been_opened[f_index]:
+            y[f_index] = 1
+
     return model
 
 
@@ -124,15 +121,16 @@ def create_objective(
     facilities,
     customers,
     distance_matrix,
-    setup_cost_array,
-    customer_demand_array,
     x,
     y,
 ):
     # create objective
     model.Minimize(
         sum(
-            sum(x[f.index, c.index] * distance_matrix[f.index, c.index] for f in facilities)
+            sum(
+                x[f.index, c.index] * distance_matrix[f.index, c.index]
+                for f in facilities
+            )
             for c in customers
         )
         + sum(y[f.index] * f.setup_cost for f in facilities)
@@ -148,26 +146,35 @@ def solve_model(model):
     return solver, status
 
 
-def main_solver(input_data, number_of_tiles_per_border = 4):
+def main_solver(input_data):
     (
         distance_matrix,
-        setup_cost_array,
-        customer_demand_array,
-        capacity_array,
         facilities,
         customers,
     ) = create_problem_matricies(input_data)
 
-    already_assigned_facilities = [False for i in range(len(facilities))]
+    # determine number of tiles
+    print(len(customers))
+    print(len(facilities))
+    if len(customers) < 1000 and len(facilities) <= 100:
+        number_of_tiles_per_border = 1
+    elif len(customers) == 1000 and len(facilities)==100:
+        number_of_tiles_per_border = 2
+    elif len(customers) == 2000 and len(facilities)==2000:
+        number_of_tiles_per_border = 10
+    elif len(customers) == 3000 and len(facilities)==500:
+        number_of_tiles_per_border = 7
+    else:
+        number_of_tiles_per_border = 4
+
     already_assigned_customers = [False for i in range(len(customers))]
 
     # find x min of facility and customer
-    assets = facilities + customers
-    x_min, x_max = min([asset.location.x for asset in assets]), max(
-        [asset.location.x for asset in assets]
+    x_min, x_max = min([customer.location.x for customer in customers]), max(
+        [customer.location.x for customer in customers]
     )
-    y_min, y_max = min([asset.location.y for asset in assets]), max(
-        [asset.location.y for asset in assets]
+    y_min, y_max = min([customer.location.y for customer in customers]), max(
+        [customer.location.y for customer in customers]
     )
 
     x_tile_lenght = (x_max - x_min) / number_of_tiles_per_border
@@ -175,7 +182,8 @@ def main_solver(input_data, number_of_tiles_per_border = 4):
 
     optimal_value = 0
     assignements = [-1 for i in range(len(customers))]
-
+    has_been_opened = [False for i in range(len(facilities))]
+    used_capacity = [0 for i in range(len(facilities))]
     for i in range(number_of_tiles_per_border):
         for j in range(number_of_tiles_per_border):
             tile_id = i * number_of_tiles_per_border + j
@@ -185,14 +193,7 @@ def main_solver(input_data, number_of_tiles_per_border = 4):
             tile_y_min = y_min + j * y_tile_lenght
             tile_y_max = y_min + (j + 1) * y_tile_lenght
 
-            # create subproblem         
-            sub_facilities = [
-                facility
-                for facility in facilities
-                if tile_x_min <= facility.location.x <= tile_x_max
-                and tile_y_min <= facility.location.y <= tile_y_max
-                and not already_assigned_facilities[facility.index]
-            ]
+            # create subproblem
             sub_customers = [
                 customer
                 for customer in customers
@@ -202,20 +203,27 @@ def main_solver(input_data, number_of_tiles_per_border = 4):
             ]
             for customer in sub_customers:
                 already_assigned_customers[customer.index] = True
-            for facility in sub_facilities:
-                already_assigned_facilities[facility.index] = True
+
+            for f_index in range(len(used_capacity)):
+                old_cap = facilities[f_index].capacity
+                new_cap = old_cap - used_capacity[f_index]
+                facilities[f_index] = facilities[f_index]._replace(capacity=new_cap)
+                if has_been_opened[f_index]:
+                    facilities[f_index] = facilities[f_index]._replace(setup_cost=0)
+
+            used_capacity = [0 for i in range(len(facilities))]
 
             model = create_model()
-            x, y = create_variables(model, sub_facilities, sub_customers)
-   
-            model = create_constraints(model, sub_facilities, sub_customers, x, y)
+            x, y = create_variables(model, facilities, sub_customers)
+
+            model = create_constraints(
+                model, facilities, sub_customers, x, y, has_been_opened
+            )
             model = create_objective(
                 model,
-                sub_facilities,
+                facilities,
                 sub_customers,
                 distance_matrix,
-                setup_cost_array,
-                customer_demand_array,
                 x,
                 y,
             )
@@ -224,9 +232,11 @@ def main_solver(input_data, number_of_tiles_per_border = 4):
             if status == cp_model.OPTIMAL:
                 optimal_value += solver.ObjectiveValue()
                 for c in sub_customers:
-                    for f in sub_facilities:
+                    for f in facilities:
                         if solver.Value(x[f.index, c.index]) == 1:
                             assignements[c.index] = f.index
+                            used_capacity[f.index] += c.demand
+                            has_been_opened[f.index] = True
                             break
             else:
                 print("No optimal solution found!")
