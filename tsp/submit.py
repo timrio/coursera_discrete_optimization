@@ -61,8 +61,9 @@ def load_metadata(metadata_file_name="_coursera"):
         metadata as a named tuple structure
     """
     os.chdir(
-        "/Users/timotheerio/Library/CloudStorage/OneDrive-TheBostonConsultingGroup,Inc/Documents/formations/Coursera Optimization/coloring"
+        "/Users/timotheerio/Library/CloudStorage/OneDrive-TheBostonConsultingGroup,Inc/Documents/formations/Coursera Optimization/tsp"
     )
+
     if not os.path.exists(metadata_file_name):
         print('metadata file "%s" not found' % metadata_file_name)
         quit()
